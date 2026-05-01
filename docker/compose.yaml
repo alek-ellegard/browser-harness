@@ -1,0 +1,44 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+    expose:
+      - "80"
+
+  chrome:
+    image: chromedp/headless-shell:latest
+    shm_size: "2gb"
+    expose:
+      - "9222"
+
+  cdp-proxy:
+    image: nginx:1.27-alpine
+    depends_on:
+      - chrome
+    expose:
+      - "9222"
+    # Chrome's DevTools HTTP endpoint rejects requests whose Host header is not
+    # localhost/127.0.0.1 (DNS-rebinding protection). The harness daemon polls
+    # /json/version with the literal hostname; this proxy rewrites Host so the
+    # cross-container request passes Chrome's check, and rewrites
+    # webSocketDebuggerUrl in the JSON response so the harness's WS connect
+    # comes back through this proxy (which also handles the WS upgrade).
+    volumes:
+      - ./cdp-proxy.conf:/etc/nginx/conf.d/default.conf:ro
+
+  harness:
+    build:
+      context: ..
+      dockerfile: docker/harness/Dockerfile
+    # BROWSER_USE_API_KEY and BU_BROWSER_ID intentionally unset:
+    # run.py:88 only triggers start_remote_daemon() when BROWSER_USE_API_KEY
+    # is set; leaving it unset keeps all traffic local to this compose stack.
+    environment:
+      BU_CDP_URL: "http://cdp-proxy:9222"
+      BU_NAME: "tracer"
+    volumes:
+      - ./out:/out
+    depends_on:
+      - frontend
+      - chrome
+      - cdp-proxy
